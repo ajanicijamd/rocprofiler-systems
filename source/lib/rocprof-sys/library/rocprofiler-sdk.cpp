@@ -532,6 +532,10 @@ tool_tracing_callback(rocprofiler_callback_tracing_record_t record,
             case ROCPROFILER_CALLBACK_TRACING_KERNEL_DISPATCH:
             case ROCPROFILER_CALLBACK_TRACING_MEMORY_COPY:
             case ROCPROFILER_CALLBACK_TRACING_RCCL_API:
+            case ROCPROFILER_CALLBACK_TRACING_OMPT:
+            case ROCPROFILER_CALLBACK_TRACING_MEMORY_ALLOCATION:
+            case ROCPROFILER_CALLBACK_TRACING_RUNTIME_INITIALIZATION:
+            case ROCPROFILER_CALLBACK_TRACING_ROCDECODE_API:
             {
                 ROCPROFSYS_CI_ABORT(true, "unhandled callback record kind: %i\n",
                                     record.kind);
@@ -617,6 +621,10 @@ tool_tracing_callback(rocprofiler_callback_tracing_record_t record,
             case ROCPROFILER_CALLBACK_TRACING_KERNEL_DISPATCH:
             case ROCPROFILER_CALLBACK_TRACING_MEMORY_COPY:
             case ROCPROFILER_CALLBACK_TRACING_RCCL_API:
+            case ROCPROFILER_CALLBACK_TRACING_OMPT:
+            case ROCPROFILER_CALLBACK_TRACING_MEMORY_ALLOCATION:
+            case ROCPROFILER_CALLBACK_TRACING_RUNTIME_INITIALIZATION:
+            case ROCPROFILER_CALLBACK_TRACING_ROCDECODE_API:
             {
                 ROCPROFSYS_CI_ABORT(true, "unhandled callback record kind: %i\n",
                                     record.kind);
@@ -665,7 +673,7 @@ tool_tracing_buffered(rocprofiler_context_id_t /*context*/,
             {
                 auto* record =
                     static_cast<rocprofiler_buffer_tracing_kernel_dispatch_record_t*>(
-                        header->payload);
+                    header->payload);
 
                 const auto* _kern_sym_data =
                     get_kernel_symbol_info(record->dispatch_info.kernel_id);
@@ -820,69 +828,113 @@ tool_tracing_buffered(rocprofiler_context_id_t /*context*/,
                 auto* record =
                     static_cast<rocprofiler_buffer_tracing_hip_api_record_t*>(
                         header->payload);
-
-                // auto        _corr_id      = record->correlation_id.internal;
-                auto        _beg_ns       = record->start_timestamp;
-                auto        _end_ns       = record->end_timestamp;
-                //auto        _dst_agent_id = record->dst_agent_id;
-                //auto        _src_agent_id = record->src_agent_id;
-                //const auto* _dst_agent    = tool_data->get_agent(_dst_agent_id);
-                //const auto* _src_agent    = tool_data->get_agent(_src_agent_id);
-                auto        _name =
-                    tool_data->buffered_tracing_info.at(record->kind, record->operation);
-
-                if(get_use_timemory())
+                
+                if (record->operation == ROCPROFILER_HIP_RUNTIME_API_ID_hipEventRecord)
                 {
-                    const auto& _tinfo = thread_info::get(record->thread_id, SystemTID);
-                    auto        _tid   = _tinfo->index_data->sequent_value;
+                    auto        _corr_id      = record->correlation_id.internal;
+                    auto        _beg_ns       = record->start_timestamp;
+                    auto        _end_ns       = record->end_timestamp;
+                    auto        _thread_id    = record->thread_id;
+                    auto        _name =
+                        tool_data->buffered_tracing_info.at(record->kind, record->operation);
 
-                    auto _bundle = kernel_dispatch_bundle_t{ _name };
+                    if(get_use_timemory())
+                    {
+                        const auto& _tinfo = thread_info::get(record->thread_id, SystemTID);
+                        auto        _tid   = _tinfo->index_data->sequent_value;
 
-                    _bundle.push(_tid).start().stop();
-                    _bundle.get([_beg_ns, _end_ns](tim::component::wall_clock* _wc) {
-                        _wc->set_value(_end_ns - _beg_ns);
-                        _wc->set_accum(_end_ns - _beg_ns);
-                    });
-                    _bundle.pop();
-                }
+                        auto _bundle = kernel_dispatch_bundle_t{ _name };
 
-                if(get_use_perfetto())
-                {
-#if 0
-                    auto _track_desc = [](int32_t                 _device_id_v,
-                                        rocprofiler_thread_id_t _tid) {
-                        const auto& _tid_v = thread_info::get(_tid, SystemTID);
-                        return JOIN("", "HIP Runtime API [", _device_id_v,
-                                    "] Thread ", _tid_v->index_data->sequent_value);
-                    };
-
-                    const auto _track = tracing::get_perfetto_track(
-                        category::rocm_memory_copy{}, _track_desc,
-                        _dst_agent->logical_node_id, record->thread_id);
-
-                    tracing::push_perfetto(
-                        category::rocm_memory_copy{}, _name.data(), _track, _beg_ns,
-                        ::perfetto::Flow::ProcessScoped(_corr_id),
-                        [&](::perfetto::EventContext ctx) {
-                            if(config::get_perfetto_annotations())
-                            {
-                                tracing::add_perfetto_annotation(ctx, "begin_ns",
-                                                                _beg_ns);
-                                tracing::add_perfetto_annotation(ctx, "end_ns", _end_ns);
-                                tracing::add_perfetto_annotation(ctx, "corr_id",
-                                                                _corr_id);
-/*
-                                tracing::add_perfetto_annotation(
-                                    ctx, "dst_agent", _dst_agent->logical_node_id);
-                                tracing::add_perfetto_annotation(
-                                    ctx, "src_agent", _src_agent->logical_node_id);
-*/
-                            }
+                        _bundle.push(_tid).start().stop();
+                        _bundle.get([_beg_ns, _end_ns](tim::component::wall_clock* _wc) {
+                            _wc->set_value(_end_ns - _beg_ns);
+                            _wc->set_accum(_end_ns - _beg_ns);
                         });
-                    tracing::pop_perfetto(category::rocm_memory_copy{}, "", _track,
-                                        _end_ns);
-#endif
+                        _bundle.pop();
+                    }
+
+                    if(get_use_perfetto())
+                    {
+                        auto _track_desc = [](rocprofiler_thread_id_t _tid) {
+                            const auto& _tid_v = thread_info::get(_tid, SystemTID);
+                            return JOIN("", "HIP Runtime API Thread ", _tid_v->index_data->sequent_value);
+                        };
+
+                        const auto _track = tracing::get_perfetto_track(
+                            category::rocm_hip_api{}, _track_desc,
+                            _thread_id);
+
+                        tracing::push_perfetto(
+                            category::rocm_hip_api{}, _name.data(), _track, _beg_ns,
+                            ::perfetto::Flow::ProcessScoped(_corr_id),
+                            [&](::perfetto::EventContext ctx) {
+                                if(config::get_perfetto_annotations())
+                                {
+                                    tracing::add_perfetto_annotation(ctx, "begin_ns",
+                                                                    _beg_ns);
+                                    tracing::add_perfetto_annotation(ctx, "end_ns", _end_ns);
+                                    tracing::add_perfetto_annotation(ctx, "corr_id",
+                                                                    _corr_id);
+                                }
+                            });
+                        tracing::pop_perfetto(category::rocm_memory_copy{}, "", _track,
+                                            _end_ns);
+                    }
                 }
+
+                if (record->operation == ROCPROFILER_HIP_RUNTIME_API_ID_hipEventSynchronize)
+                {
+                    auto        _corr_id      = record->correlation_id.internal;
+                    auto        _beg_ns       = record->start_timestamp;
+                    auto        _end_ns       = record->end_timestamp;
+                    auto        _thread_id    = record->thread_id;
+                    auto        _name =
+                        tool_data->buffered_tracing_info.at(record->kind, record->operation);
+
+                    if(get_use_timemory())
+                    {
+                        const auto& _tinfo = thread_info::get(record->thread_id, SystemTID);
+                        auto        _tid   = _tinfo->index_data->sequent_value;
+
+                        auto _bundle = kernel_dispatch_bundle_t{ _name };
+
+                        _bundle.push(_tid).start().stop();
+                        _bundle.get([_beg_ns, _end_ns](tim::component::wall_clock* _wc) {
+                            _wc->set_value(_end_ns - _beg_ns);
+                            _wc->set_accum(_end_ns - _beg_ns);
+                        });
+                        _bundle.pop();
+                    }
+
+                    if(get_use_perfetto())
+                    {
+                        auto _track_desc = [](rocprofiler_thread_id_t _tid) {
+                            const auto& _tid_v = thread_info::get(_tid, SystemTID);
+                            return JOIN("", "HIP Runtime API Thread ", _tid_v->index_data->sequent_value);
+                        };
+
+                        const auto _track = tracing::get_perfetto_track(
+                            category::rocm_hip_api{}, _track_desc,
+                            _thread_id);
+
+                        tracing::push_perfetto(
+                            category::rocm_hip_api{}, _name.data(), _track, _beg_ns,
+                            ::perfetto::Flow::ProcessScoped(_corr_id),
+                            [&](::perfetto::EventContext ctx) {
+                                if(config::get_perfetto_annotations())
+                                {
+                                    tracing::add_perfetto_annotation(ctx, "begin_ns",
+                                                                    _beg_ns);
+                                    tracing::add_perfetto_annotation(ctx, "end_ns", _end_ns);
+                                    tracing::add_perfetto_annotation(ctx, "corr_id",
+                                                                    _corr_id);
+                                }
+                            });
+                        tracing::pop_perfetto(category::rocm_memory_copy{}, "", _track,
+                                            _end_ns);
+                    }
+                }
+
             }
             else
             {
