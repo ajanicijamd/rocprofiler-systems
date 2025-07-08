@@ -50,3 +50,12 @@ include(${CMAKE_CURRENT_LIST_DIR}/rocprof-sys-nic-perf.cmake)
 include(${CMAKE_CURRENT_LIST_DIR}/rocprof-sys-roctx-tests.cmake)
 
 add_subdirectory(source)
+
+## Install
+
+set(CMAKE_INSTALL_DEFAULT_COMPONENT_NAME "tests")
+
+install(
+    DIRECTORY ${PROJECT_SOURCE_DIR}/tests2
+    DESTINATION ${CMAKE_INSTALL_DATAROOTDIR}/${PACKAGE_NAME}-tests
+    COMPONENT tests)
